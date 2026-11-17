@@ -1,0 +1,321 @@
+
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Parkour World 3D</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { overflow:hidden; background:#000; font-family:'Segoe UI',sans-serif; }
+  #game { width:100vw; height:100vh; display:block; }
+  #hud {
+    position:fixed; top:15px; left:15px; right:15px; z-index:10;
+    display:flex; justify-content:space-between;
+    color:#0ff; font-size:20px; text-shadow:0 0 10px #0ff; pointer-events:none;
+  }
+  #overlay {
+    position:fixed; inset:0; background:rgba(0,0,0,0.85);
+    display:flex; flex-direction:column; justify-content:center; align-items:center;
+    z-index:100; color:#fff; text-align:center;
+  }
+  #overlay h1 { font-size:48px; color:#0ff; text-shadow:0 0 20px #0ff; margin-bottom:20px; }
+  #overlay p { font-size:18px; margin-bottom:30px; color:#aaa; max-width:600px; }
+  #overlay button {
+    padding:15px 50px; font-size:20px; background:linear-gradient(90deg,#0ff,#f0f);
+    border:none; border-radius:30px; color:#000; font-weight:bold; cursor:pointer; margin:5px;
+  }
+  .hidden { display:none !important; }
+  #mobileCtrl {
+    position:fixed; bottom:20px; left:0; right:0; display:flex; justify-content:space-around; z-index:10;
+  }
+  .mbtn {
+    width:80px; height:80px; border-radius:50%;
+    background:rgba(0,255,255,0.15); border:2px solid #0ff;
+    color:#0ff; font-size:28px; font-weight:bold; touch-action:none;
+  }
+  .mbtn:active { background:rgba(0,255,255,0.5); }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="hud">
+  <div>🏁 LEVEL: <span id="level">1</span>/20</div>
+  <div>⭐ <span id="stars">0</span></div>
+  <div>⏱ <span id="time">0</span>s</div>
+</div>
+<div id="mobileCtrl">
+  <button class="mbtn" id="btnL">◀</button>
+  <button class="mbtn" id="btnJ">⬆</button>
+  <button class="mbtn" id="btnR">▶</button>
+</div>
+<div id="overlay">
+  <h1>PARKOUR WORLD 3D</h1>
+  <p>◀ ▶ — yugurish &nbsp;|&nbsp; ⬆ / SPACE — sakrash. Platformalar ustidan sakrab, finish'ga yeting!</p>
+  <button id="startBtn">START LEVEL 1</button>
+</div>
+
+<script type="importmap">
+{ "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+</script>
+<script type="module">
+import * as THREE from 'three';
+
+const canvas = document.getElementById('game');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias:true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.shadowMap.enabled = true;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0a0520);
+scene.fog = new THREE.Fog(0x0a0520, 30, 100);
+
+const camera = new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.1, 500);
+camera.position.set(0, 8, 14);
+camera.lookAt(0, 2, 0);
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+const sun = new THREE.DirectionalLight(0xffffff, 1);
+sun.position.set(10, 20, 10);
+sun.castShadow = true;
+scene.add(sun);
+const neon = new THREE.PointLight(0x00ffff, 2, 30);
+neon.position.set(0, 8, 0);
+scene.add(neon);
+const pink = new THREE.PointLight(0xff00ff, 2, 30);
+pink.position.set(5, 5, -10);
+scene.add(pink);
+
+// PLAYER
+const player = new THREE.Group();
+const pBody = new THREE.Mesh(
+  new THREE.BoxGeometry(0.8, 1.4, 0.6),
+  new THREE.MeshStandardMaterial({ color:0x00ffff, emissive:0x004466, metalness:0.5 })
+);
+pBody.position.y = 0.7; pBody.castShadow = true;
+player.add(pBody);
+const pHead = new THREE.Mesh(
+  new THREE.SphereGeometry(0.32, 16,16),
+  new THREE.MeshStandardMaterial({ color:0xffccaa })
+);
+pHead.position.y = 1.7; pHead.castShadow = true;
+player.add(pHead);
+player.position.set(0, 0.7, 0);
+scene.add(player);
+
+// platform pool
+const platforms = [];
+const platformMat = new THREE.MeshStandardMaterial({ color:0x334466, metalness:0.6, roughness:0.3 });
+const platformEdgeMat = new THREE.MeshBasicMaterial({ color:0x00ffff });
+
+function createPlatform(x, y, z, w, d) {
+  const g = new THREE.Group();
+  const p = new THREE.Mesh(new THREE.BoxGeometry(w, 0.4, d), platformMat);
+  p.castShadow = true; p.receiveShadow = true;
+  g.add(p);
+  // neon edge
+  const edge = new THREE.Mesh(
+    new THREE.BoxGeometry(w+0.1, 0.1, d+0.1),
+    platformEdgeMat
+  );
+  edge.position.y = 0.2;
+  g.add(edge);
+  g.position.set(x, y, z);
+  g.userData = { w, d, topY: y + 0.2 };
+  scene.add(g);
+  platforms.push(g);
+  return g;
+}
+
+// finish flag
+function createFinish(x, y, z) {
+  const flag = new THREE.Group();
+  const pole = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.05,0.05,3,8),
+    new THREE.MeshStandardMaterial({ color:0xffffff })
+  );
+  pole.position.y = 1.5;
+  flag.add(pole);
+  const cloth = new THREE.Mesh(
+    new THREE.PlaneGeometry(1.2, 0.8),
+    new THREE.MeshBasicMaterial({ color:0x00ff00, side:THREE.DoubleSide })
+  );
+  cloth.position.set(0.6, 2.5, 0);
+  flag.add(cloth);
+  flag.position.set(x, y, z);
+  scene.add(flag);
+  return flag;
+}
+
+// generate level
+let finishObj = null;
+let currentLevel = 1;
+function generateLevel(level) {
+  // clear
+  platforms.forEach(p => scene.remove(p));
+  platforms.length = 0;
+  if (finishObj) { scene.remove(finishObj); finishObj = null; }
+
+  const count = 4 + Math.min(level, 8);
+  let x = 0, y = 0.7, z = 0;
+  for (let i = 0; i < count; i++) {
+    const w = 3 + Math.random()*2;
+    const d = 3 + Math.random()*2;
+    createPlatform(x, y, z, w, d);
+    // next
+    const dx = (Math.random()-0.5) * 6;
+    const dz = -(4 + Math.random()*3);
+    const dy = (Math.random()-0.3) * 2;
+    x += dx; y += dy; z += dz;
+  }
+  // final platform + flag
+  createPlatform(x, y, z, 5, 5);
+  finishObj = createFinish(x, y+0.2, z);
+  finishObj.userData = { x, y, z };
+
+  // reset player
+  player.position.set(0, 0.7, 0);
+  player.velocity = new THREE.Vector3();
+  player.onGround = true;
+}
+
+// state
+const state = {
+  running: false,
+  level: 1,
+  stars: 0,
+  startTime: 0,
+  keys: {},
+  vy: 0,
+  onGround: true,
+};
+const keys = {};
+
+addEventListener('keydown', e => {
+  keys[e.code] = true;
+  if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') jump();
+});
+addEventListener('keyup', e => { keys[e.code] = false; });
+
+document.getElementById('btnL').addEventListener('touchstart', e=>{e.preventDefault(); keys['ArrowLeft']=true;});
+document.getElementById('btnL').addEventListener('touchend', e=>{e.preventDefault(); keys['ArrowLeft']=false;});
+document.getElementById('btnR').addEventListener('touchstart', e=>{e.preventDefault(); keys['ArrowRight']=true;});
+document.getElementById('btnR').addEventListener('touchend', e=>{e.preventDefault(); keys['ArrowRight']=false;});
+document.getElementById('btnJ').addEventListener('touchstart', e=>{e.preventDefault(); jump();});
+
+function jump() {
+  if (state.onGround && state.running) {
+    state.vy = 0.28;
+    state.onGround = false;
+  }
+}
+
+// physics loop
+const clock = new THREE.Clock();
+function update(dt) {
+  if (!state.running) return;
+
+  // horizontal movement
+  const speed = 0.12;
+  if (keys['ArrowLeft'] || keys['KeyA']) player.position.x -= speed;
+  if (keys['ArrowRight'] || keys['KeyD']) player.position.x += speed;
+  if (keys['ArrowUp'] || keys['KeyW']) player.position.z -= speed;
+
+  // gravity
+  state.vy -= 0.015;
+  player.position.y += state.vy;
+
+  // check landing on platforms
+  let landed = false;
+  for (const p of platforms) {
+    const ud = p.userData;
+    const px = p.position.x, pz = p.position.z;
+    if (Math.abs(player.position.x - px) < ud.w/2 + 0.3 &&
+        Math.abs(player.position.z - pz) < ud.d/2 + 0.3) {
+      if (player.position.y <= ud.topY + 0.8 && player.position.y >= ud.topY - 0.3) {
+        if (state.vy <= 0) {
+          player.position.y = ud.topY + 0.7;
+          state.vy = 0;
+          state.onGround = true;
+          landed = true;
+        }
+      }
+    }
+  }
+  if (!landed) state.onGround = false;
+
+  // fell off
+  if (player.position.y < -15) {
+    // respawn
+    player.position.set(0, 0.7, 0);
+    state.vy = 0;
+    state.onGround = true;
+  }
+
+  // camera follow
+  camera.position.x += (player.position.x*0.6 - camera.position.x) * 0.08;
+  camera.position.z += (player.position.z + 14 - camera.position.z) * 0.08;
+  camera.position.y = 8 + player.position.y*0.3;
+  camera.lookAt(player.position.x*0.7, player.position.y + 1, player.position.z - 5);
+
+  neon.position.set(player.position.x, player.position.y + 6, player.position.z - 5);
+
+  // finish check
+  if (finishObj) {
+    const f = finishObj.userData;
+    if (Math.abs(player.position.x - f.x) < 2.5 &&
+        Math.abs(player.position.z - f.z) < 2.5 &&
+        player.position.y > f.y - 1) {
+      levelComplete();
+    }
+  }
+
+  // HUD
+  document.getElementById('time').textContent = Math.floor((performance.now()-state.startTime)/1000);
+}
+
+function levelComplete() {
+  state.running = false;
+  state.stars += 1;
+  document.getElementById('stars').textContent = state.stars;
+  state.level++;
+  if (state.level > 20) {
+    const overlay = document.getElementById('overlay');
+    overlay.classList.remove('hidden');
+    overlay.innerHTML = `
+      <h1>🏆 BARCHA BOSQICHLAR TUGADI!</h1>
+      <p>Siz 20 ta bosqichni yakunladingiz! Yulduzlar: ${state.stars}</p>
+      <button id="restartBtn">QAYTA O'YNASH</button>
+    `;
+    document.getElementById('restartBtn').addEventListener('click', ()=>location.reload());
+    return;
+  }
+  document.getElementById('level').textContent = state.level;
+  generateLevel(state.level);
+  state.startTime = performance.now();
+  setTimeout(() => { state.running = true; }, 300);
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+  update(Math.min(clock.getDelta(), 0.05));
+  renderer.render(scene, camera);
+}
+animate();
+
+document.getElementById('startBtn').addEventListener('click', () => {
+  document.getElementById('overlay').classList.add('hidden');
+  generateLevel(1);
+  state.running = true;
+  state.startTime = performance.now();
+});
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>
